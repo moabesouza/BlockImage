@@ -1,17 +1,20 @@
 import express from "express";
 import mysql from "mysql";
 
+const port = process.env.PORT || 3030;
+
 const con = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: 'admin123',
-    database: 'BlockChain'
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 3306,
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || 'admin123',
+    database: process.env.DB_NAME || 'BlockChain'
 });
 
 con.connect((err) => {
     if (err) {
         console.error('Erro ao conectar ao banco de dados:', err.stack);
-        return;
+        process.exit(1);
     }
     console.log('Conexão bem-sucedida ao banco de dados');
 });
@@ -155,6 +158,6 @@ app.get('/minhas-imagens', (req, res) => {
   );
 });
 
-app.listen(3030, () => {
-    console.log('Servidor rodando em http://localhost:3030');
+app.listen(port, () => {
+    console.log(`Servidor rodando em http://localhost:${port}`);
 });
