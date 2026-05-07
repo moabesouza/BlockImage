@@ -1,7 +1,27 @@
 import express from "express";
 import mysql from "mysql";
+import bcrypt from "bcryptjs";
 
 const port = process.env.PORT || 3030;
+const passwordSaltRounds = 10;
+const minPasswordLength = 6;
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const normalizeEmail = (email) => {
+    return typeof email === 'string' ? email.trim().toLowerCase() : '';
+};
+
+const isBcryptHash = (password) => {
+    return typeof password === 'string' && /^\$2[aby]\$\d{2}\$/.test(password);
+};
+
+const validateEmail = (email) => {
+    return emailRegex.test(email);
+};
+
+const validateSignupPassword = (password) => {
+    return typeof password === 'string' && password.length >= minPasswordLength;
+};
 
 const con = mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -101,31 +121,81 @@ app.get('/imagens-por-area', (req, res) => {
 });
 
 app.post('/login', (req, res) => {
-  const { email, password } = req.body;
-  con.query('SELECT * FROM usuarios WHERE email = ? AND password = ?', [email, password], (err, rows) => {
+  const email = normalizeEmail(req.body.email);
+  const { password } = req.body;
+
+  if (!validateEmail(email) || typeof password !== 'string' || password.length === 0) {
+    return res.status(400).json({ sucesso: false, mensagem: 'Email ou senha inválidos' });
+  }
+
+  con.query('SELECT idusuarios, password FROM usuarios WHERE email = ?', [email], async (err, rows) => {
     if (err) return res.status(500).json({ sucesso: false });
-    if (rows.length > 0) {
-      res.json({ sucesso: true, id: rows[0].idusuarios });
-    } else {
-      res.json({ sucesso: false, mensagem: 'Email ou senha inválidos' });
+
+    if (rows.length === 0) {
+      return res.json({ sucesso: false, mensagem: 'Email ou senha inválidos' });
+    }
+
+    const usuario = rows[0];
+    const storedPassword = usuario.password;
+
+    try {
+      const passwordMatches = isBcryptHash(storedPassword)
+        ? await bcrypt.compare(password, storedPassword)
+        : password === storedPassword;
+
+      if (!passwordMatches) {
+        return res.json({ sucesso: false, mensagem: 'Email ou senha inválidos' });
+      }
+
+      if (!isBcryptHash(storedPassword)) {
+        const hashedPassword = await bcrypt.hash(password, passwordSaltRounds);
+        con.query(
+          'UPDATE usuarios SET password = ? WHERE idusuarios = ?',
+          [hashedPassword, usuario.idusuarios],
+          (updateErr) => {
+            if (updateErr) console.error('Erro ao atualizar hash da senha:', updateErr);
+          }
+        );
+      }
+
+      res.json({ sucesso: true, id: usuario.idusuarios });
+    } catch (error) {
+      console.error('Erro ao validar senha:', error);
+      res.status(500).json({ sucesso: false });
     }
   });
 });
 
 app.post('/cadastro', (req, res) => {
-  const { email, password } = req.body;
+  const email = normalizeEmail(req.body.email);
+  const { password } = req.body;
 
-  con.query('SELECT * FROM usuarios WHERE email = ?', [email], (err, rows) => {
+  if (!validateEmail(email)) {
+    return res.status(400).json({ sucesso: false, mensagem: 'Informe um email válido.' });
+  }
+
+  if (!validateSignupPassword(password)) {
+    return res.status(400).json({ sucesso: false, mensagem: `A senha deve ter pelo menos ${minPasswordLength} caracteres.` });
+  }
+
+  con.query('SELECT idusuarios FROM usuarios WHERE email = ?', [email], async (err, rows) => {
     if (err) return res.status(500).json({ sucesso: false });
 
     if (rows.length > 0) {
       return res.json({ sucesso: false, mensagem: 'Email já cadastrado!' });
     }
 
-    con.query('INSERT INTO usuarios (email, password) VALUES (?, ?)', [email, password], (err) => {
-      if (err) return res.status(500).json({ sucesso: false });
-      res.json({ sucesso: true });
-    });
+    try {
+      const hashedPassword = await bcrypt.hash(password, passwordSaltRounds);
+
+      con.query('INSERT INTO usuarios (email, password) VALUES (?, ?)', [email, hashedPassword], (err) => {
+        if (err) return res.status(500).json({ sucesso: false });
+        res.json({ sucesso: true });
+      });
+    } catch (error) {
+      console.error('Erro ao gerar hash da senha:', error);
+      res.status(500).json({ sucesso: false });
+    }
   });
 });
 
